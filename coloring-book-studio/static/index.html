@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Colouring Book Studio</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%96%8D%3C/text%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #fffaf2; --panel: #ffffff; --ink: #2b2a33; --muted: #6d6a78; --line: #e7e0d4;
+  --accent: #ff7a59; --accent-ink: #ffffff; --accent-soft: #ffe7df; --ok: #2f9e6e; --warn: #c24d2c;
+  --radius: 14px;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+header h1 { font-size: 1.15rem; margin: 0 12px 0 0; white-space: nowrap; }
+header h1 span { color: var(--accent); }
+nav { display: flex; flex-wrap: wrap; gap: 4px; padding: 10px 16px 0; max-width: 1100px; margin: 0 auto; }
+nav button { border: 0; background: transparent; padding: 8px 14px; border-radius: 999px; font: inherit; cursor: pointer; color: var(--muted); }
+nav button.active { background: var(--accent-soft); color: var(--ink); font-weight: 600; }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+section.tab { display: none; }
+section.tab.active { display: block; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+label { display: block; font-size: .85rem; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+input, select, textarea { width: 100%; font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink); }
+textarea { resize: vertical; }
+button.btn { font: inherit; border: 1px solid var(--line); background: #fff; color: var(--ink); padding: 8px 14px; border-radius: 10px; cursor: pointer; }
+button.btn:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.danger { color: var(--warn); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.hint { color: var(--muted); font-size: .88rem; }
+.chip { display: inline-block; background: var(--accent-soft); border-radius: 999px; padding: 1px 10px; font-size: .8rem; margin-right: 4px; }
+.page-card { display: grid; grid-template-columns: 220px 1fr; gap: 16px; }
+@media (max-width: 720px) { .page-card { grid-template-columns: 1fr; } }
+.thumb { width: 100%; aspect-ratio: 3 / 4; border: 1px dashed var(--line); border-radius: 10px; background: #fff; display: flex; align-items: center; justify-content: center; overflow: hidden; color: var(--muted); font-size: .85rem; text-align: center; padding: 6px; }
+.thumb img { width: 100%; height: 100%; object-fit: contain; }
+.thumb.busy { background: repeating-linear-gradient(45deg, #fff, #fff 10px, var(--accent-soft) 10px, var(--accent-soft) 20px); background-size: 200% 200%; animation: slide 2s linear infinite; }
+@keyframes slide { to { background-position: 100% 100%; } }
+.progress { height: 10px; background: var(--line); border-radius: 999px; overflow: hidden; flex: 1; min-width: 120px; }
+.progress div { height: 100%; width: 0; background: var(--ok); transition: width .3s; }
+#toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 10px; max-width: 90vw; display: none; z-index: 20; }
+#toast.error { background: var(--warn); }
+pre.prompt { white-space: pre-wrap; background: #faf7f0; border-radius: 10px; padding: 10px; font-size: .82rem; }
+/* Reader */
+.reader { display: grid; grid-template-columns: 1fr 1.2fr; gap: 16px; align-items: start; }
+@media (max-width: 860px) { .reader { grid-template-columns: 1fr; } }
+.story-text { font-size: 1.5rem; line-height: 1.6; white-space: pre-wrap; font-family: "Comic Sans MS", "Comic Neue", "Chalkboard SE", system-ui, sans-serif; }
+.story-text.older { font-size: 1.15rem; }
+#colourCanvas { display: block; margin: 0 auto; max-width: 100%; max-height: 78vh; width: auto; height: auto; border: 1px solid var(--line); border-radius: 10px; background: #fff; touch-action: manipulation; cursor: crosshair; }
+.palette { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.palette button { width: 38px; height: 38px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 0 1px var(--line); cursor: pointer; }
+.palette button.sel { box-shadow: 0 0 0 3px var(--ink); }
+.empty { text-align: center; padding: 40px 16px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🖍️ Colouring Book <span>Studio</span></h1>
+  <select id="bookSelect" style="width:auto;min-width:200px" aria-label="Choose a book"></select>
+  <button class="btn" id="newBook">+ New book</button>
+  <span class="hint" id="saveState"></span>
+</header>
+<nav id="tabs">
+  <button data-tab="book" class="active">1. Book</button>
+  <button data-tab="characters">2. Characters</button>
+  <button data-tab="story">3. Story</button>
+  <button data-tab="pages">4. Pictures</button>
+  <button data-tab="read">5. Read &amp; Colour</button>
+  <button data-tab="settings">⚙ AI settings</button>
+</nav>
+<main>
+  <div id="noBook" class="card empty">Create your first book with <b>+ New book</b>.</div>
+
+  <section class="tab active" id="tab-book">
+    <div class="card grid">
+      <div><label for="title">Title</label><input id="title" data-field="title"></div>
+      <div><label for="author">Author</label><input id="author" data-field="author"></div>
+      <div><label for="age">Age group</label>
+        <select id="age" data-field="age_band">
+          <option value="early">5–7 · few words, very thick lines</option>
+          <option value="middle">8–10 · medium</option>
+          <option value="older">11–12 · more text, finer detail</option>
+        </select></div>
+      <div><label for="layout">Page layout</label>
+        <select id="layout" data-field="layout">
+          <option value="facing_pages">Text page, then full-page picture</option>
+          <option value="text_above">Text above the picture</option>
+        </select></div>
+      <div><label for="paper">Paper</label>
+        <select id="paper" data-field="paper"><option value="a4">A4</option><option value="letter">US Letter</option></select></div>
+    </div>
+    <div class="card">
+      <label for="style">Art direction for every picture (optional)</label>
+      <textarea id="style" data-field="style_notes" rows="2" placeholder="e.g. set in the African bushveld, cute round animals, simple flowers and trees"></textarea>
+      <p class="hint">Age group changes the words per page, the font size, how detailed the pictures are and how thick the lines are. Re-generate pictures after changing it.</p>
+    </div>
+    <div class="card page-card">
+      <div><div class="thumb" id="coverThumb">No cover yet</div></div>
+      <div>
+        <label for="coverScene">Cover picture (optional)</label>
+        <textarea id="coverScene" data-field="cover_scene" rows="3" placeholder="Leave empty for a picture of all the main characters together"></textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="btn primary" data-gen="cover">Generate cover</button>
+          <button class="btn" data-upload="cover">Upload a drawing</button>
+          <button class="btn" data-prompt="cover">Show AI prompt</button>
+        </div>
+        <pre class="prompt" id="prompt-cover" hidden></pre>
+      </div>
+    </div>
+    <div class="card row">
+      <button class="btn primary" id="exportPdf">⬇ Download printable PDF</button>
+      <span class="hint" id="pdfInfo"></span>
+      <span style="flex:1"></span>
+      <button class="btn danger" id="deleteBook">Delete this book</button>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-characters">
+    <div class="card hint">Describe each character the <b>same way every time</b>: animal or person, age, body shape, hair, clothes, one or two stand-out features. This exact description is added to every picture they appear in, which is what keeps them looking alike from page to page. Add other names the story uses for them (e.g. “Gran, Ouma”) so they're recognised.</div>
+    <div id="charList"></div>
+    <button class="btn primary" id="addChar">+ Add character</button>
+  </section>
+
+  <section class="tab" id="tab-story">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <label for="storyText" style="margin:0">Your story</label>
+        <span class="hint" id="wordCount"></span>
+      </div>
+      <textarea id="storyText" data-field="story" rows="18" placeholder="Paste or type your story here…&#10;&#10;Tip: put a line with just --- where you want a new page to start. Without it, the story is split automatically."></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="btn" id="uploadStory">Upload .txt / .md file</button>
+      </div>
+    </div>
+    <div class="card row">
+      <div style="width:200px"><label for="targetPages">Number of pages</label><input id="targetPages" type="number" min="1" placeholder="Automatic"></div>
+      <div style="flex:1;min-width:220px" class="hint">Leave empty to let the age group decide (about 50 / 100 / 160 words per page). No upper limit. Lines with just <code>---</code> always force a page break.</div>
+      <button class="btn primary" id="splitBtn">Split into pages →</button>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-pages">
+    <div class="card row">
+      <button class="btn primary" id="genAll">Generate all missing pictures</button>
+      <button class="btn" id="stopAll" hidden>Stop</button>
+      <div class="progress"><div id="progressBar"></div></div>
+      <span class="hint" id="progressText"></span>
+    </div>
+    <div id="pageList"></div>
+    <div class="empty" id="noPages">No pages yet. Go to <b>3. Story</b> and press <b>Split into pages</b>.</div>
+  </section>
+
+  <section class="tab" id="tab-read">
+    <div class="card row">
+      <button class="btn" id="prevPage">◀</button>
+      <b id="readerPos"></b>
+      <button class="btn" id="nextPage">▶</button>
+      <span style="flex:1"></span>
+      <button class="btn" id="readAloud">🔊 Read to me</button>
+    </div>
+    <div class="reader">
+      <div class="card"><div class="story-text" id="readerText"></div></div>
+      <div class="card">
+        <canvas id="colourCanvas" width="10" height="10"></canvas>
+        <div class="empty" id="noPicture" hidden>This page has no picture yet.</div>
+        <div class="palette" id="palette"></div>
+        <div class="row">
+          <button class="btn" id="undo">↶ Undo</button>
+          <button class="btn" id="eraser">Eraser</button>
+          <button class="btn" id="clearColour">Start again</button>
+          <button class="btn" id="saveColour">Save my picture</button>
+        </div>
+        <p class="hint">Tap a space to fill it with colour.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-settings">
+    <div class="card">
+      <label>Picture maker (all free)</label>
+      <select id="provider">
+        <option value="pollinations">Pollinations.ai – free, no account (default)</option>
+        <option value="hugging_face">Hugging Face – free account token, small monthly allowance</option>
+        <option value="local_sd">My own Stable Diffusion – free & unlimited, needs a good graphics card</option>
+        <option value="placeholder">Test drawings – no AI, works offline</option>
+      </select>
+    </div>
+    <div class="card" data-prov="pollinations">
+      <div class="grid">
+        <div><label>Server</label><input id="pollinations_url"></div>
+        <div><label>Model</label><input id="pollinations_model"></div>
+        <div><label>Token (optional, free sign-up, fewer limits)</label><input id="pollinations_token" type="password" placeholder="leave empty to keep current"></div>
+      </div>
+      <p class="hint">Free and anonymous, but rate-limited: expect roughly one picture at a time with a short wait in between. Generating a 30-page book can take 10–30 minutes.</p>
+    </div>
+    <div class="card" data-prov="hugging_face">
+      <div class="grid">
+        <div><label>Access token (huggingface.co → Settings → Access Tokens)</label><input id="hf_token" type="password" placeholder="leave empty to keep current"></div>
+        <div><label>Model</label><input id="hf_model"></div>
+      </div>
+      <p class="hint">Free accounts get a small monthly credit; fine for a few books, then it stops until the next month.</p>
+    </div>
+    <div class="card" data-prov="local_sd">
+      <div class="grid">
+        <div><label>Address (start WebUI/Forge with --api)</label><input id="sd_url"></div>
+        <div><label>Steps</label><input id="sd_steps" type="number" min="1" max="150"></div>
+        <div><label>Extra prompt (e.g. a line-art LoRA)</label><input id="sd_extra_prompt"></div>
+      </div>
+      <p class="hint">Best quality and consistency long-term: free, unlimited, private. Use a line-art/colouring-book model or LoRA.</p>
+    </div>
+    <div class="card row"><button class="btn primary" id="saveSettings">Save settings</button><span class="hint" id="tokenState"></span></div>
+  </section>
+</main>
+<input type="file" id="filePick" hidden>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+let book = null;          // current project
+let saveTimer = null;
+let busy = new Set();     // slots being generated
+let stopRequested = false;
+
+function toast(msg, isError) {
+  const t = $("#toast");
+  t.textContent = msg; t.className = isError ? "error" : ""; t.style.display = "block";
+  clearTimeout(t._h); t._h = setTimeout(() => t.style.display = "none", isError ? 9000 : 3000);
+}
+
+async function api(method, url, body, raw) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    if (raw) opts.body = body;
+    else { opts.body = JSON.stringify(body); opts.headers["Content-Type"] = "application/json"; }
+  }
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).error || msg; } catch (_) {}
+    throw new Error(msg);
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+function imgUrl(name) { return `/api/projects/${book.id}/images/${name}`; }
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+// ---------- tabs ----------
+$$("#tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+function showTab(name) {
+  $$("#tabs button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  $$("section.tab").forEach(s => s.classList.toggle("active", s.id === "tab-" + name));
+  if (name === "read") openReader();
+  if (name === "settings") loadSettings();
+}
+
+// ---------- books ----------
+async function loadBooks(selectId) {
+  const list = await api("GET", "/api/projects");
+  const sel = $("#bookSelect");
+  sel.innerHTML = list.map(b => `<option value="${b.id}">${esc(b.title)} (${b.illustrated}/${b.pages} pictures)</option>`).join("");
+  $("#noBook").hidden = list.length > 0;
+  $$("section.tab").forEach(s => s.style.visibility = list.length || s.id === "tab-settings" ? "" : "hidden");
+  const id = selectId || localStorage.getItem("cbs.book") || (list[0] && list[0].id);
+  if (id && list.some(b => b.id === id)) { sel.value = id; await openBook(id); }
+  else if (list[0]) { sel.value = list[0].id; await openBook(list[0].id); }
+  else book = null;
+}
+
+async function openBook(id) {
+  await flushSave();
+  book = await api("GET", `/api/projects/${id}`);
+  try { localStorage.setItem("cbs.book", id); } catch (_) {}
+  renderAll();
+}
+
+$("#bookSelect").onchange = e => openBook(e.target.value);
+$("#newBook").onclick = async () => {
+  const title = prompt("Title of the new book?", "My Colouring Storybook");
+  if (title === null) return;
+  const p = await api("POST", "/api/projects", { title });
+  await loadBooks(p.id);
+  showTab("book");
+};
+$("#deleteBook").onclick = async () => {
+  if (!book || !confirm(`Delete “${book.title}” and all its pictures? This cannot be undone.`)) return;
+  await api("DELETE", `/api/projects/${book.id}`);
+  book = null;
+  try { localStorage.removeItem("cbs.book"); } catch (_) {}
+  await loadBooks();
+};
+
+// ---------- saving ----------
+function scheduleSave() {
+  $("#saveState").textContent = "Saving…";
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveNow, 700);
+}
+async function saveNow() {
+  saveTimer = null;
+  if (!book) return;
+  try {
+    const saved = await api("PUT", `/api/projects/${book.id}`, book);
+    // Keep local text (user may have typed meanwhile) but take server-owned fields.
+    mergeServer(saved);
+    $("#saveState").textContent = "All changes saved";
+    refreshBookOption();
+  } catch (e) { $("#saveState").textContent = "Not saved!"; toast("Could not save: " + e.message, true); }
+}
+async function flushSave() { if (saveTimer) { clearTimeout(saveTimer); await saveNow(); } }
+
+// Take pictures/ids/derived data from the server without clobbering in-progress typing.
+function mergeServer(server) {
+  book.cover_image = server.cover_image;
+  book.cover_attempt = server.cover_attempt;
+  book.pages.forEach((p, i) => {
+    const s = server.pages[i];
+    if (!s) return;
+    if (!p.id) p.id = s.id;
+    const byId = server.pages.find(x => x.id === p.id) || s;
+    p.image = byId.image; p.attempt = byId.attempt; p.present = byId.present;
+  });
+  renderPicturesOnly();
+}
+
+function refreshBookOption() {
+  const o = $(`#bookSelect option[value="${book.id}"]`);
+  if (o) o.textContent = `${book.title} (${book.pages.filter(p => p.image).length}/${book.pages.length} pictures)`;
+}
+
+// Inputs bound to top-level fields.
+$$("[data-field]").forEach(el => el.addEventListener("input", () => {
+  if (!book) return;
+  book[el.dataset.field] = el.value;
+  if (el.id === "storyText") updateWordCount();
+  scheduleSave();
+}));
+
+// ---------- render ----------
+function renderAll() {
+  if (!book) return;
+  $$("[data-field]").forEach(el => el.value = book[el.dataset.field] ?? "");
+  updateWordCount();
+  renderCharacters();
+  renderPages();
+  renderPicturesOnly();
+  $("#saveState").textContent = "";
+}
+
+function updateWordCount() {
+  const n = (book.story.match(/\S+/g) || []).length;
+  $("#wordCount").textContent = `${n} words`;
+}
+
+function renderCharacters() {
+  const list = $("#charList");
+  list.innerHTML = book.characters.map((c, i) => `
+    <div class="card">
+      <div class="grid">
+        <div><label>Name</label><input data-char="${i}" data-key="name" value="${esc(c.name)}" placeholder="e.g. Lulu"></div>
+        <div><label>Other names in the story</label><input data-char="${i}" data-key="aliases" value="${esc(c.aliases)}" placeholder="e.g. the little giraffe, Lu"></div>
+      </div>
+      <label style="margin-top:8px">What they look like</label>
+      <textarea rows="3" data-char="${i}" data-key="description" placeholder="e.g. a small young giraffe with big round eyes, short stubby horns, a spotty coat and a striped scarf">${esc(c.description)}</textarea>
+      <div class="row" style="margin-top:8px"><button class="btn danger" data-delchar="${i}">Remove</button></div>
+    </div>`).join("") || `<div class="card empty">No characters yet.</div>`;
+  list.querySelectorAll("[data-char]").forEach(el => el.oninput = () => {
+    book.characters[+el.dataset.char][el.dataset.key] = el.value; scheduleSave();
+  });
+  list.querySelectorAll("[data-delchar]").forEach(el => el.onclick = () => {
+    book.characters.splice(+el.dataset.delchar, 1); renderCharacters(); scheduleSave();
+  });
+}
+$("#addChar").onclick = () => {
+  book.characters.push({ name: "", aliases: "", description: "" });
+  renderCharacters(); scheduleSave();
+  const inputs = $$('#charList input[data-key="name"]'); inputs[inputs.length - 1]?.focus();
+};
+
+function renderPages() {
+  const list = $("#pageList");
+  $("#noPages").hidden = book.pages.length > 0;
+  list.innerHTML = book.pages.map((p, i) => `
+    <div class="card page-card" data-page="${p.id}">
+      <div><div class="thumb" id="thumb-${p.id}"></div></div>
+      <div>
+        <div class="row" style="justify-content:space-between"><b>Page ${i + 1}</b><span id="chips-${p.id}"></span></div>
+        <label style="margin-top:6px">Story text</label>
+        <textarea rows="4" data-ptext="${i}">${esc(p.text)}</textarea>
+        <label style="margin-top:6px">Picture idea (optional)</label>
+        <textarea rows="2" data-pscene="${i}" placeholder="Leave empty to illustrate the story text. Describe one clear moment, e.g. “Lulu peeking over a tall hedge at a hot-air balloon”.">${esc(p.scene)}</textarea>
+        <div class="row" style="margin-top:8px">
+          <button class="btn primary" data-gen="${p.id}">Generate</button>
+          <button class="btn" data-upload="${p.id}">Upload a drawing</button>
+          <button class="btn" data-prompt="${p.id}">Show AI prompt</button>
+          <span style="flex:1"></span>
+          <button class="btn" data-addafter="${i}" title="Insert a page after this one">+ Page</button>
+          <button class="btn danger" data-delpage="${i}">Delete</button>
+        </div>
+        <pre class="prompt" id="prompt-${p.id}" hidden></pre>
+      </div>
+    </div>`).join("");
+  list.querySelectorAll("[data-ptext]").forEach(el => el.oninput = () => { book.pages[+el.dataset.ptext].text = el.value; scheduleSave(); });
+  list.querySelectorAll("[data-pscene]").forEach(el => el.oninput = () => { book.pages[+el.dataset.pscene].scene = el.value; scheduleSave(); });
+  list.querySelectorAll("[data-delpage]").forEach(el => el.onclick = () => {
+    if (!confirm("Delete this page and its picture?")) return;
+    book.pages.splice(+el.dataset.delpage, 1); renderPages(); renderPicturesOnly(); scheduleSave();
+  });
+  list.querySelectorAll("[data-addafter]").forEach(el => el.onclick = async () => {
+    book.pages.splice(+el.dataset.addafter + 1, 0, { id: "", text: "", scene: "", image: null, attempt: 0 });
+    clearTimeout(saveTimer); await saveNow(); renderPages(); renderPicturesOnly();
+  });
+  bindSlotButtons(list);
+}
+
+function renderPicturesOnly() {
+  if (!book) return;
+  setThumb($("#coverThumb"), book.cover_image, "cover", "No cover yet");
+  book.pages.forEach(p => {
+    const t = document.getElementById("thumb-" + p.id);
+    if (t) setThumb(t, p.image, p.id, "No picture yet");
+    const c = document.getElementById("chips-" + p.id);
+    if (c) c.innerHTML = (p.present || []).map(n => `<span class="chip">${esc(n)}</span>`).join("");
+  });
+  const done = book.pages.filter(p => p.image).length;
+  $("#pdfInfo").textContent = `${done} of ${book.pages.length} pages have pictures${book.cover_image ? ", cover ready" : ""}.`;
+  $$("[data-gen]").forEach(b => {
+    const slot = b.dataset.gen;
+    const has = slot === "cover" ? book.cover_image : book.pages.find(p => p.id === slot)?.image;
+    b.textContent = busy.has(slot) ? "Drawing…" : has ? "Try again" : (slot === "cover" ? "Generate cover" : "Generate");
+    b.disabled = busy.has(slot);
+  });
+}
+
+function setThumb(el, image, slot, emptyText) {
+  el.classList.toggle("busy", busy.has(slot));
+  if (busy.has(slot)) { el.innerHTML = "Drawing…"; return; }
+  el.innerHTML = image ? `<img alt="" src="${imgUrl(image)}">` : emptyText;
+}
+
+function bindSlotButtons(root) {
+  root.querySelectorAll("[data-gen]").forEach(b => b.onclick = () => generate(b.dataset.gen).catch(e => toast(e.message, true)));
+  root.querySelectorAll("[data-upload]").forEach(b => b.onclick = () => uploadDrawing(b.dataset.upload));
+  root.querySelectorAll("[data-prompt]").forEach(b => b.onclick = () => showPrompt(b.dataset.prompt));
+}
+bindSlotButtons($("#tab-book"));
+
+// ---------- pictures ----------
+async function generate(slot) {
+  if (!slot) return;
+  await flushSave();
+  busy.add(slot); renderPicturesOnly();
+  try {
+    const server = await api("POST", `/api/projects/${book.id}/slots/${slot}/generate`);
+    busy.delete(slot);
+    mergeServer(server); refreshBookOption();
+  } finally { busy.delete(slot); renderPicturesOnly(); }
+}
+
+async function showPrompt(slot) {
+  await flushSave();
+  const el = document.getElementById("prompt-" + slot);
+  if (!el.hidden) { el.hidden = true; return; }
+  const p = await api("GET", `/api/projects/${book.id}/slots/${slot}/prompt`);
+  el.textContent = `${p.prompt}\n\nAvoid: ${p.negative}\n\nSize ${p.width}×${p.height}, seed ${p.seed}`;
+  el.hidden = false;
+}
+
+function pickFile(accept) {
+  return new Promise(resolve => {
+    const f = $("#filePick");
+    f.accept = accept; f.value = "";
+    f.onchange = () => resolve(f.files[0] || null);
+    f.click();
+  });
+}
+
+async function uploadDrawing(slot) {
+  const file = await pickFile("image/*");
+  if (!file) return;
+  await flushSave();
+  busy.add(slot); renderPicturesOnly();
+  try {
+    const server = await api("POST", `/api/projects/${book.id}/slots/${slot}/upload`, file, true);
+    busy.delete(slot); mergeServer(server); toast("Drawing cleaned up and added");
+  } catch (e) { toast(e.message, true); }
+  finally { busy.delete(slot); renderPicturesOnly(); }
+}
+
+$("#genAll").onclick = async () => {
+  await flushSave();
+  const todo = book.pages.filter(p => !p.image).map(p => p.id);
+  if (!book.cover_image) todo.unshift("cover");
+  if (!todo.length) { toast("Every page already has a picture. Use “Try again” on any you want to redo."); return; }
+  stopRequested = false;
+  $("#genAll").disabled = true; $("#stopAll").hidden = false;
+  let done = 0, failed = 0;
+  const update = () => {
+    $("#progressBar").style.width = `${Math.round(100 * done / todo.length)}%`;
+    $("#progressText").textContent = `${done} / ${todo.length}${failed ? ` · ${failed} failed` : ""}`;
+  };
+  update();
+  for (const slot of todo) {
+    if (stopRequested) break;
+    if (slot !== "cover" && !book.pages.some(p => p.id === slot)) { done++; continue; }
+    try { await generate(slot); }
+    catch (e) { failed++; toast(`Picture failed: ${e.message}`, true); }
+    done++; update();
+  }
+  $("#genAll").disabled = false; $("#stopAll").hidden = true;
+  toast(stopRequested ? "Stopped" : failed ? `Finished with ${failed} failed – press Generate on those pages to retry` : "All pictures done!");
+};
+$("#stopAll").onclick = () => { stopRequested = true; $("#stopAll").hidden = true; toast("Stopping after the current picture…"); };
+
+// ---------- story ----------
+$("#uploadStory").onclick = async () => {
+  const file = await pickFile(".txt,.md,.text,text/plain,text/markdown");
+  if (!file) return;
+  const text = await file.text();
+  if (book.story.trim() && !confirm("Replace the current story text with this file?")) return;
+  book.story = text; $("#storyText").value = text; updateWordCount(); scheduleSave();
+};
+$("#splitBtn").onclick = async () => {
+  if (!book.story.trim()) { toast("Add your story first", true); return; }
+  if (book.pages.length && !confirm("This replaces all current pages (and their pictures). Continue?")) return;
+  await flushSave();
+  const n = parseInt($("#targetPages").value, 10);
+  const server = await api("POST", `/api/projects/${book.id}/split`, { target_pages: n > 0 ? n : null });
+  book = server; renderAll(); refreshBookOption();
+  toast(`Split into ${book.pages.length} pages`);
+  showTab("pages");
+};
+
+$("#exportPdf").onclick = async () => {
+  await flushSave();
+  const missing = book.pages.filter(p => !p.image).length;
+  if (missing && !confirm(`${missing} page(s) have no picture yet. Download anyway?`)) return;
+  window.location = `/api/projects/${book.id}/book.pdf`;
+};
+
+// ---------- settings ----------
+async function loadSettings() {
+  const s = await api("GET", "/api/settings");
+  $("#provider").value = s.provider;
+  for (const k of ["pollinations_url", "pollinations_model", "hf_model", "sd_url", "sd_steps", "sd_extra_prompt"]) $("#" + k).value = s[k];
+  $("#pollinations_token").value = ""; $("#hf_token").value = "";
+  $("#tokenState").textContent = [s.hf_token_set && "Hugging Face token saved", s.pollinations_token_set && "Pollinations token saved"].filter(Boolean).join(" · ");
+  showProviderPanel();
+}
+function showProviderPanel() { $$("[data-prov]").forEach(el => el.hidden = el.dataset.prov !== $("#provider").value); }
+$("#provider").onchange = showProviderPanel;
+$("#saveSettings").onclick = async () => {
+  const body = { provider: $("#provider").value };
+  for (const k of ["pollinations_url", "pollinations_model", "pollinations_token", "hf_token", "hf_model", "sd_url", "sd_extra_prompt"]) body[k] = $("#" + k).value;
+  body.sd_steps = parseInt($("#sd_steps").value, 10) || 28;
+  try { await api("PUT", "/api/settings", body); toast("Settings saved"); loadSettings(); }
+  catch (e) { toast(e.message, true); }
+};
+
+// ---------- read & colour ----------
+const COLOURS = ["#ff4d4d", "#ff9f1c", "#ffd23f", "#8ac926", "#2a9d8f", "#4cc9f0", "#3a86ff", "#7b2cbf",
+                 "#ff70a6", "#a0522d", "#f4c095", "#ffffff", "#9e9e9e", "#3d3d3d", "#b5e48c", "#ffe5ec"];
+let readerIndex = 0, colour = COLOURS[0], undoStack = [], lineMask = null;
+const coloured = {}; // page id -> ImageData (kept for this session)
+const canvas = $("#colourCanvas"), ctx = canvas.getContext("2d", { willReadFrequently: true });
+
+$("#palette").innerHTML = COLOURS.map(c => `<button style="background:${c}" data-colour="${c}" aria-label="${c}"></button>`).join("");
+$$("#palette button").forEach(b => b.onclick = () => selectColour(b.dataset.colour));
+function selectColour(c) { colour = c; $$("#palette button").forEach(b => b.classList.toggle("sel", b.dataset.colour === c)); }
+selectColour(colour);
+$("#eraser").onclick = () => selectColour("#ffffff");
+
+function openReader() {
+  if (!book) return;
+  readerIndex = Math.min(readerIndex, Math.max(0, book.pages.length - 1));
+  showReaderPage();
+}
+$("#prevPage").onclick = () => { saveColouring(); if (readerIndex > 0) { readerIndex--; showReaderPage(); } };
+$("#nextPage").onclick = () => { saveColouring(); if (readerIndex < book.pages.length - 1) { readerIndex++; showReaderPage(); } };
+
+function showReaderPage() {
+  speechSynthesis.cancel();
+  const p = book.pages[readerIndex];
+  $("#readerPos").textContent = p ? `Page ${readerIndex + 1} of ${book.pages.length}` : "No pages yet";
+  $("#readerText").textContent = p ? p.text : "";
+  $("#readerText").classList.toggle("older", book.age_band === "older");
+  undoStack = [];
+  if (!p || !p.image) { canvas.hidden = true; $("#noPicture").hidden = false; return; }
+  canvas.hidden = false; $("#noPicture").hidden = true;
+  const img = new Image();
+  img.onload = () => {
+    // Work at ≤1200 px for fast filling and small undo snapshots.
+    const s = Math.min(1, 1200 / Math.max(img.width, img.height));
+    canvas.width = Math.round(img.width * s); canvas.height = Math.round(img.height * s);
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const base = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    lineMask = new Uint8Array(canvas.width * canvas.height);
+    for (let i = 0; i < lineMask.length; i++) {
+      const d = base.data;
+      const l = 0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2];
+      lineMask[i] = l < 160 ? 1 : 0;
+      const v = lineMask[i] ? 0 : 255;
+      d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = v; d[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(coloured[p.id] && coloured[p.id].width === canvas.width ? coloured[p.id] : base, 0, 0);
+  };
+  img.src = imgUrl(p.image);
+}
+
+function saveColouring() {
+  const p = book && book.pages[readerIndex];
+  if (p && p.image && !canvas.hidden && lineMask) coloured[p.id] = ctx.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+canvas.addEventListener("pointerdown", e => {
+  if (!lineMask) return;
+  const r = canvas.getBoundingClientRect();
+  const x = Math.floor((e.clientX - r.left) * canvas.width / r.width);
+  const y = Math.floor((e.clientY - r.top) * canvas.height / r.height);
+  fill(x, y, colour);
+});
+
+function fill(x, y, hex) {
+  const w = canvas.width, h = canvas.height;
+  if (x < 0 || y < 0 || x >= w || y >= h || lineMask[y * w + x]) return;
+  const img = ctx.getImageData(0, 0, w, h);
+  const px = new Uint32Array(img.data.buffer);
+  const n = parseInt(hex.slice(1), 16);
+  const target = ((255 << 24) | ((n & 255) << 16) | (n & 0xff00) | (n >> 16)) >>> 0; // little-endian RGBA
+  const start = px[y * w + x];
+  if (start === target) return;
+  undoStack.push(ctx.getImageData(0, 0, w, h)); if (undoStack.length > 15) undoStack.shift();
+  const stack = [y * w + x];
+  while (stack.length) {
+    let i = stack.pop();
+    let cx = i % w; const cy = (i - cx) / w;
+    while (cx > 0 && px[i - 1] === start && !lineMask[i - 1]) { i--; cx--; }
+    let up = false, down = false;
+    for (; cx < w && px[i] === start && !lineMask[i]; i++, cx++) {
+      px[i] = target;
+      if (cy > 0) { const u = i - w, ok = px[u] === start && !lineMask[u]; if (ok && !up) stack.push(u); up = ok; }
+      if (cy < h - 1) { const d = i + w, ok = px[d] === start && !lineMask[d]; if (ok && !down) stack.push(d); down = ok; }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+$("#undo").onclick = () => { const s = undoStack.pop(); if (s) ctx.putImageData(s, 0, 0); };
+$("#clearColour").onclick = () => {
+  const p = book.pages[readerIndex]; if (!p || !confirm("Remove all the colours on this page?")) return;
+  delete coloured[p.id]; showReaderPage();
+};
+$("#saveColour").onclick = () => {
+  const a = document.createElement("a");
+  a.download = `${book.title} - page ${readerIndex + 1}.png`;
+  a.href = canvas.toDataURL("image/png"); a.click();
+};
+$("#readAloud").onclick = () => {
+  const p = book.pages[readerIndex]; if (!p) return;
+  if (speechSynthesis.speaking) { speechSynthesis.cancel(); return; }
+  const u = new SpeechSynthesisUtterance(p.text);
+  u.rate = book.age_band === "early" ? 0.85 : 0.95;
+  speechSynthesis.speak(u);
+};
+
+window.addEventListener("beforeunload", e => { if (saveTimer) { saveNow(); e.preventDefault(); } });
+loadBooks().catch(e => toast(e.message, true));
+</script>
+</body>
+</html>
