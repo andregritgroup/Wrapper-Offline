@@ -273,17 +273,18 @@ pub fn build_book(project: &Project, images: &HashMap<String, GrayImage>) -> Vec
         if !project.author.trim().is_empty() {
             c.centred(&format!("by {}", project.author.trim()), 18.0, pw, MARGIN + 38.0, false);
         }
-        c.centred(&format!("A read & colour storybook \u{2022} ages {}", project.age_band.label()), 11.0, pw, MARGIN + 14.0, false);
+        let colour = project.spelling.colour();
+        c.centred(&format!("A read & {colour} storybook \u{2022} ages {}", project.age_band.label()), 11.0, pw, MARGIN + 14.0, false);
         canvases.push(c);
     }
 
     // "This book belongs to" page.
-    {
+    if project.extras {
         let mut c = Canvas::new();
         c.rect(MARGIN, MARGIN, cw, ch, 2.0, 0.0);
         c.centred("This book belongs to", 30.0, pw, ph * 0.62, true);
         c.hline(MARGIN + 60.0, pw - MARGIN - 60.0, ph * 0.5, 1.5);
-        c.centred("Read each page, then colour the picture!", 14.0, pw, ph * 0.38, false);
+        c.centred(&format!("Read each page, then {} the picture!", project.spelling.colour()), 14.0, pw, ph * 0.38, false);
         canvases.push(c);
     }
 
@@ -291,6 +292,7 @@ pub fn build_book(project: &Project, images: &HashMap<String, GrayImage>) -> Vec
     let mut number = 1;
     for page in &project.pages {
         let img = image_obj(&mut pdf, &page.image);
+        let before = canvases.len();
         match project.layout {
             Layout::FacingPages => {
                 let mut t = Canvas::new();
@@ -318,6 +320,25 @@ pub fn build_book(project: &Project, images: &HashMap<String, GrayImage>) -> Vec
                 canvases.push(p);
                 number += 1;
             }
+            Layout::PictureAbove => {
+                let mut c = Canvas::new();
+                let gap = 16.0;
+                let side = cw.min(ch * 0.72);
+                let top = ph - MARGIN;
+                if let Some((obj, iw, ih)) = img {
+                    c.image_fit(obj, iw, ih, MARGIN + (cw - side) / 2.0, top - side, side, side);
+                }
+                let text_h = ch - side - gap - 14.0;
+                let (size, lines) = fit_text(&page.text, base, cw - 10.0, text_h);
+                let mut y = top - side - gap - size;
+                for line in &lines {
+                    c.centred(line, size, pw, y, false);
+                    y -= size * 1.45;
+                }
+                c.centred(&number.to_string(), 10.0, pw, MARGIN / 2.0, false);
+                canvases.push(c);
+                number += 1;
+            }
             Layout::TextAbove => {
                 let mut c = Canvas::new();
                 let (size, lines) = fit_text(&page.text, base, cw - 10.0, ch * 0.38);
@@ -336,10 +357,19 @@ pub fn build_book(project: &Project, images: &HashMap<String, GrayImage>) -> Vec
                 number += 1;
             }
         }
+        if project.blank_backs {
+            // Each picture page gets an empty back (counted in the numbering, not numbered).
+            let added = canvases.len() - before;
+            let picture_pages = if project.layout == Layout::FacingPages { 1 } else { added };
+            for _ in 0..picture_pages {
+                canvases.push(Canvas::new());
+                number += 1;
+            }
+        }
     }
 
     // "The End".
-    {
+    if project.extras {
         let mut c = Canvas::new();
         c.centred("The End", 44.0, pw, ph * 0.55, true);
         canvases.push(c);
@@ -411,6 +441,22 @@ mod tests {
         assert!(text.contains("/Count 9"));
         // the shared image is embedded once
         assert_eq!(text.matches("/Subtype /Image").count(), 1);
+    }
+
+    #[test]
+    fn picture_above_with_blank_backs_and_no_extras() {
+        let (mut p, imgs) = sample(Layout::PictureAbove);
+        p.blank_backs = true;
+        p.extras = false;
+        p.spelling = crate::model::Spelling::Us;
+        let text = String::from_utf8_lossy(&build_book(&p, &imgs)).to_string();
+        // cover + 3 × (picture page + blank back)
+        assert!(text.contains("/Count 7"), "{}", text.matches("/Count").count());
+        let (mut p, imgs) = sample(Layout::FacingPages);
+        p.blank_backs = true;
+        let text = String::from_utf8_lossy(&build_book(&p, &imgs)).to_string();
+        // cover + belongs-to + 3 × (text, picture, blank) + the end
+        assert!(text.contains("/Count 12"));
     }
 
     #[test]

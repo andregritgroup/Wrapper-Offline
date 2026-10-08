@@ -82,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/projects", get(list_projects).post(create_project))
         .route("/api/projects/:id", get(get_project).put(update_project).delete(delete_project))
         .route("/api/projects/:id/split", post(split_pages))
+        .route("/api/projects/:id/duplicate", post(duplicate_project))
         .route("/api/projects/:id/slots/:slot/prompt", get(slot_prompt))
         .route("/api/projects/:id/slots/:slot/generate", post(generate_slot))
         .route("/api/projects/:id/slots/:slot/upload", post(upload_slot))
@@ -144,6 +145,10 @@ async fn delete_project(State(st): State<AppState>, Path(id): Path<String>) -> A
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn duplicate_project(State(st): State<AppState>, Path(id): Path<String>) -> ApiResult<Json<Project>> {
+    Ok(Json(st.store.duplicate(&id)?))
+}
+
 #[derive(Deserialize)]
 struct SplitBody {
     target_pages: Option<usize>,
@@ -155,8 +160,12 @@ async fn split_pages(
     Json(body): Json<SplitBody>,
 ) -> ApiResult<Json<Project>> {
     let p = st.store.load(&id)?;
-    let texts = story::split_story(&p.story, p.age_band, body.target_pages);
-    Ok(Json(st.store.replace_pages(&id, texts)?))
+    let pages = story::split_story(&p.story, p.age_band, body.target_pages)
+        .iter()
+        .map(|page| story::extract_picture(page))
+        .filter(|(text, scene)| !text.is_empty() || !scene.is_empty())
+        .collect();
+    Ok(Json(st.store.replace_pages(&id, pages)?))
 }
 
 async fn slot_prompt(State(st): State<AppState>, Path((id, slot)): Path<(String, String)>) -> ApiResult<impl IntoResponse> {
@@ -169,14 +178,15 @@ async fn slot_prompt(State(st): State<AppState>, Path((id, slot)): Path<(String,
 
 async fn generate_slot(State(st): State<AppState>, Path((id, slot)): Path<(String, String)>) -> ApiResult<Json<Project>> {
     let slot = Slot::parse(&slot);
+    if slot == Slot::Style {
+        return Err(anyhow::anyhow!("the style picture is uploaded, not generated").into());
+    }
     let p = st.store.load(&id)?;
     let req = story::image_prompt(&p, &slot).ok_or_else(|| NotFound("page".into()))?;
     let settings = st.settings.read().await.clone();
     let reference = if settings.provider.uses_references() && !req.references.is_empty() {
         let mut images = Vec::new();
-        for cid in &req.references {
-            let c = &p.characters[p.character_index(cid).ok_or_else(|| NotFound("character".into()))?];
-            let name = c.reference_image.as_deref().unwrap_or_default();
+        for name in &req.references {
             images.push(image::open(st.store.image_path(&id, name)?)?.to_luma8());
         }
         Some(tokio::task::spawn_blocking(move || lineart::reference_sheet(&images)).await??)
@@ -184,7 +194,7 @@ async fn generate_slot(State(st): State<AppState>, Path((id, slot)): Path<(Strin
         None
     };
     let raw = ai::generate(&st.http, &settings, &req, reference).await?;
-    let age = p.age_band;
+    let age = p.detail_level();
     let png = tokio::task::spawn_blocking(move || lineart::to_coloring_png(&raw, age)).await??;
     Ok(Json(st.store.set_image(&id, &slot, &png, true)?))
 }
@@ -197,7 +207,7 @@ async fn upload_slot(
 ) -> ApiResult<Json<Project>> {
     let slot = Slot::parse(&slot);
     let p = st.store.load(&id)?;
-    let age = p.age_band;
+    let age = p.detail_level();
     let png = tokio::task::spawn_blocking(move || lineart::to_coloring_png(&body, age))
         .await?
         .map_err(|e| anyhow::anyhow!("that file is not an image I can read ({e})"))?;

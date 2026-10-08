@@ -90,14 +90,35 @@ pre.prompt { white-space: pre-wrap; background: #faf7f0; border-radius: 10px; pa
         <select id="layout" data-field="layout">
           <option value="facing_pages">Text page, then full-page picture</option>
           <option value="text_above">Text above the picture</option>
+          <option value="picture_above">Square picture, text below</option>
         </select></div>
       <div><label for="paper">Paper</label>
-        <select id="paper" data-field="paper"><option value="a4">A4</option><option value="letter">US Letter</option></select></div>
+        <select id="paper" data-field="paper"><option value="a4">A4</option><option value="letter">US Letter (8.5 × 11 in, KDP)</option></select></div>
+      <div><label for="detail">Picture detail</label>
+        <select id="detail" data-field="detail">
+          <option value="auto">Match the age group</option>
+          <option value="simple">Simple · big shapes, very thick lines</option>
+          <option value="medium">Medium</option>
+          <option value="detailed">Detailed storybook line art</option>
+        </select></div>
+      <div><label for="spelling">Spelling of the book's own words</label>
+        <select id="spelling" data-field="spelling"><option value="uk">British (colour)</option><option value="us">American (color)</option></select></div>
+      <div><label>Print options</label>
+        <label style="font-weight:400;color:var(--ink)"><input type="checkbox" data-field="blank_backs" style="width:auto"> Blank back after each picture</label>
+        <label style="font-weight:400;color:var(--ink)"><input type="checkbox" data-field="extras" style="width:auto"> “This book belongs to” and “The End” pages</label></div>
     </div>
     <div class="card">
       <label for="style">Art direction for every picture (optional)</label>
       <textarea id="style" data-field="style_notes" rows="2" placeholder="e.g. set in the African bushveld, cute round animals, simple flowers and trees"></textarea>
       <p class="hint">Age group changes the words per page, the font size, how detailed the pictures are and how thick the lines are. Re-generate pictures after changing it.</p>
+    </div>
+    <div class="card page-card">
+      <div><div class="thumb" id="thumb-style">No style picture</div></div>
+      <div>
+        <label>Style reference picture (optional)</label>
+        <p class="hint" style="margin-top:0">Upload one picture you're happy with (for example an approved page). With Runware, every new picture, including the characters' reference pictures, copies its drawing style.</p>
+        <div class="row"><button class="btn" data-upload="style">Upload style picture</button></div>
+      </div>
     </div>
     <div class="card page-card">
       <div><div class="thumb" id="coverThumb">No cover yet</div></div>
@@ -116,6 +137,7 @@ pre.prompt { white-space: pre-wrap; background: #faf7f0; border-radius: 10px; pa
       <button class="btn primary" id="exportPdf">⬇ Download printable PDF</button>
       <span class="hint" id="pdfInfo"></span>
       <span style="flex:1"></span>
+      <button class="btn" id="duplicateBook" title="Same pictures, separate text: e.g. a second edition for another age group">Copy book with pictures</button>
       <button class="btn danger" id="deleteBook">Delete this book</button>
     </div>
   </section>
@@ -132,14 +154,14 @@ pre.prompt { white-space: pre-wrap; background: #faf7f0; border-radius: 10px; pa
         <label for="storyText" style="margin:0">Your story</label>
         <span class="hint" id="wordCount"></span>
       </div>
-      <textarea id="storyText" data-field="story" rows="18" placeholder="Paste or type your story here…&#10;&#10;Tip: put a line with just --- where you want a new page to start. Without it, the story is split automatically."></textarea>
+      <textarea id="storyText" data-field="story" rows="18" placeholder="Paste or type your story here…&#10;&#10;Tip: put a line with just --- where you want a new page to start. Without it, the story is split automatically.&#10;Inside a page, a line starting with Picture: describes what to draw (it is not printed)."></textarea>
       <div class="row" style="margin-top:8px">
         <button class="btn" id="uploadStory">Upload .txt / .md file</button>
       </div>
     </div>
     <div class="card row">
       <div style="width:200px"><label for="targetPages">Number of pages</label><input id="targetPages" type="number" min="1" placeholder="Automatic"></div>
-      <div style="flex:1;min-width:220px" class="hint">Leave empty to let the age group decide (about 50 / 100 / 160 words per page). No upper limit. Lines with just <code>---</code> always force a page break.</div>
+      <div style="flex:1;min-width:220px" class="hint">Leave empty to let the age group decide (about 50 / 100 / 160 words per page). No upper limit. Lines with just <code>---</code> always force a page break, and a line starting with <code>Picture:</code> inside a page becomes that page's picture idea.</div>
       <button class="btn primary" id="splitBtn">Split into pages →</button>
     </div>
   </section>
@@ -301,6 +323,12 @@ $("#newBook").onclick = async () => {
   await loadBooks(p.id);
   showTab("book");
 };
+$("#duplicateBook").onclick = async () => {
+  await flushSave();
+  const p = await api("POST", `/api/projects/${book.id}/duplicate`);
+  await loadBooks(p.id);
+  toast("Copied with all pictures. Change the text for the new edition.");
+};
 $("#deleteBook").onclick = async () => {
   if (!book || !confirm(`Delete “${book.title}” and all its pictures? This cannot be undone.`)) return;
   await api("DELETE", `/api/projects/${book.id}`);
@@ -332,6 +360,7 @@ async function flushSave() { if (saveTimer) { clearTimeout(saveTimer); await sav
 function mergeServer(server) {
   book.cover_image = server.cover_image;
   book.cover_attempt = server.cover_attempt;
+  book.style_image = server.style_image;
   let newCharIds = false;
   book.characters.forEach((c, i) => {
     if (!c.id && server.characters[i]) { c.id = server.characters[i].id; newCharIds = true; }
@@ -357,7 +386,7 @@ function refreshBookOption() {
 // Inputs bound to top-level fields.
 $$("[data-field]").forEach(el => el.addEventListener("input", () => {
   if (!book) return;
-  book[el.dataset.field] = el.value;
+  book[el.dataset.field] = el.type === "checkbox" ? el.checked : el.value;
   if (el.id === "storyText") updateWordCount();
   scheduleSave();
 }));
@@ -365,7 +394,10 @@ $$("[data-field]").forEach(el => el.addEventListener("input", () => {
 // ---------- render ----------
 function renderAll() {
   if (!book) return;
-  $$("[data-field]").forEach(el => el.value = book[el.dataset.field] ?? "");
+  $$("[data-field]").forEach(el => {
+    if (el.type === "checkbox") el.checked = !!book[el.dataset.field];
+    else el.value = book[el.dataset.field] ?? "";
+  });
   updateWordCount();
   renderCharacters();
   renderPages();
@@ -456,6 +488,7 @@ function renderPages() {
 function renderPicturesOnly() {
   if (!book) return;
   setThumb($("#coverThumb"), book.cover_image, "cover", "No cover yet");
+  setThumb($("#thumb-style"), book.style_image, "style", "No style picture");
   book.pages.forEach(p => {
     const t = document.getElementById("thumb-" + p.id);
     if (t) setThumb(t, p.image, p.id, "No picture yet");

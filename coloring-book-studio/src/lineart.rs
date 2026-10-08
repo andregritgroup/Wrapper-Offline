@@ -11,8 +11,9 @@ use imageproc::region_labelling::{connected_components, Connectivity};
 
 use crate::model::AgeBand;
 
-/// Long side of the processed page in pixels (≈ 250 dpi on A4).
-pub const WORK_LONG_SIDE: u32 = 2048;
+/// Long side of the processed page in pixels: at least 300 dpi for a square picture on
+/// US Letter / A4 (KDP's print requirement) and ≈ 300 dpi for a full-page portrait picture.
+pub const WORK_LONG_SIDE: u32 = 3072;
 
 #[derive(Debug, Clone, Copy)]
 pub struct LineParams {

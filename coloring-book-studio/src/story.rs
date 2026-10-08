@@ -235,7 +235,7 @@ pub struct ImagePrompt {
     pub width: u32,
     pub height: u32,
     pub seed: u64,
-    /// Ids of characters whose reference pictures apply to this picture.
+    /// Stored file names of the reference pictures (style first, then characters).
     pub references: Vec<String>,
 }
 
@@ -246,22 +246,45 @@ const NEGATIVE: &str = "color, colour, colored, shading, shadows, gradient, grey
 halftone, crosshatching, solid black areas, photo, photorealistic, 3d render, text, letters, words, \
 title, watermark, signature, frame clutter, blurry, sketchy, messy lines, scary, violent, blood, weapon";
 
-fn age_style(age: AgeBand) -> &'static str {
-    match age {
+/// Prompt wording for a picture detail level (see `Project::detail_level`).
+fn detail_style(level: AgeBand) -> &'static str {
+    match level {
         AgeBand::Early => {
-            "very simple coloring page for young children aged 5 to 7, extra thick bold outlines, \
+            "very simple coloring page for young children, extra thick bold outlines, \
              big simple rounded shapes, large open areas to colour, very little background detail, \
              cute friendly cartoon style"
         }
         AgeBand::Middle => {
-            "coloring page for children aged 8 to 10, bold clean outlines, medium detail, \
+            "coloring page for children, bold clean outlines, medium detail, \
              simple background scenery, friendly cartoon storybook style"
         }
         AgeBand::Older => {
-            "detailed coloring page for children aged 11 to 12, clean confident outlines, \
-             more intricate details and a fuller background with patterns, storybook illustration style"
+            "detailed storybook coloring page, bold outer outlines with thinner inner detail lines, \
+             more intricate details and a fuller background, storybook illustration style"
         }
     }
+}
+
+/// Split a page's "Picture: …" lines (until the next blank line) off its story text.
+/// Returns (story text, picture idea).
+pub fn extract_picture(page: &str) -> (String, String) {
+    let mut text = Vec::new();
+    let mut picture = Vec::new();
+    let mut in_picture = false;
+    for line in page.lines() {
+        let trimmed = line.trim();
+        let lower = trimmed.to_lowercase();
+        if let Some(rest) = ["picture:", "scene:"].iter().find_map(|k| lower.starts_with(k).then(|| &trimmed[k.len()..])) {
+            in_picture = true;
+            picture.push(rest.trim().to_string());
+        } else if in_picture && !trimmed.is_empty() {
+            picture.push(trimmed.to_string());
+        } else {
+            in_picture = false;
+            text.push(line);
+        }
+    }
+    (text.join("\n").trim().to_string(), picture.join(" ").trim().to_string())
 }
 
 /// Build the image prompt for a cover or page. `None` if the page id is unknown.
@@ -310,42 +333,45 @@ pub fn image_prompt(project: &Project, slot: &Slot) -> Option<ImagePrompt> {
             );
             (scene, vec![c.name.trim().to_string()], 100_000 + idx as u64, c.ref_attempt, true)
         }
+        Slot::Style => return None,
     };
 
     let mut prompt = format!(
         "Black and white children's coloring book page. {}. Pure white background, crisp black ink \
          outlines only, no shading, no grey, no colour, no solid black fills, every shape fully closed \
          so it can be coloured in, no text or letters anywhere. Scene: {}.",
-        age_style(project.age_band),
-        truncate_words(&scene, 110).trim_end_matches(['.', ' '])
+        detail_style(project.detail_level()),
+        truncate_words(&scene, 220).trim_end_matches(['.', ' '])
     );
     let descriptions: Vec<String> = project
         .characters
         .iter()
         .filter(|c| present.iter().any(|p| p == c.name.trim()))
         .filter(|c| !c.description.trim().is_empty())
-        .map(|c| format!("{}: {}", c.name.trim(), truncate_words(&c.description, 45)))
+        .map(|c| format!("{}: {}", c.name.trim(), truncate_words(&c.description, 90).trim_end_matches(['.', ' '])))
         .collect();
     if !descriptions.is_empty() {
         prompt.push_str(&format!(" Characters (draw them exactly like this): {}.", descriptions.join("; ")));
     }
     if !project.style_notes.trim().is_empty() {
-        prompt.push_str(&format!(" Style: {}.", truncate_words(&project.style_notes, 40)));
+        prompt.push_str(&format!(" Style: {}.", truncate_words(&project.style_notes, 90).trim_end_matches(['.', ' '])));
     }
 
     let (width, height) = if portrait { (768, 1024) } else { (1024, 1024) };
     let seed = (project.seed + index * 1009 + attempt as u64 * 7919) % 2_147_483_647;
-    // Reference pictures the image model should copy the characters' look from.
-    let references = match slot {
-        Slot::Character(_) => Vec::new(),
-        _ => project
-            .characters
-            .iter()
-            .filter(|c| c.reference_image.is_some() && present.iter().any(|p| p == c.name.trim()))
-            .take(MAX_REFERENCES)
-            .map(|c| c.id.clone())
-            .collect(),
-    };
+    // Reference pictures the image model should copy: the book's style picture first,
+    // then the characters on this page (a character's own sheet only gets the style).
+    let mut references: Vec<String> = project.style_image.iter().cloned().collect();
+    if !matches!(slot, Slot::Character(_)) {
+        references.extend(
+            project
+                .characters
+                .iter()
+                .filter(|c| present.iter().any(|p| p == c.name.trim()))
+                .filter_map(|c| c.reference_image.clone())
+                .take(MAX_REFERENCES),
+        );
+    }
     Some(ImagePrompt { prompt, negative: NEGATIVE.into(), width, height, seed, references })
 }
 
@@ -424,10 +450,23 @@ mod tests {
         assert!(ip.references.is_empty(), "Lulu has no reference picture");
         let cover = image_prompt(&p, &Slot::Cover).unwrap();
         assert!(cover.prompt.contains("round bear") && cover.prompt.contains("small giraffe"));
-        assert_eq!(cover.references, vec!["b"]);
+        assert_eq!(cover.references, vec!["b.png"]);
         let sheet = image_prompt(&p, &Slot::Character("l".into())).unwrap();
         assert!(sheet.prompt.contains("small giraffe") && !sheet.prompt.contains("round bear"));
         assert!(sheet.references.is_empty());
+        p.style_image = Some("style.png".into());
+        assert_eq!(image_prompt(&p, &Slot::Character("l".into())).unwrap().references, vec!["style.png"]);
+        assert_eq!(image_prompt(&p, &Slot::Cover).unwrap().references, vec!["style.png", "b.png"]);
+        assert!(image_prompt(&p, &Slot::Style).is_none());
+    }
+
+    #[test]
+    fn picture_lines_are_split_from_text() {
+        let (t, p) = extract_picture("Pip wakes up.\nPicture: Pip in bed,\nlooking out.\n\nOh no!");
+        assert_eq!(t, "Pip wakes up.\n\nOh no!");
+        assert_eq!(p, "Pip in bed, looking out.");
+        let (t, p) = extract_picture("Just text.");
+        assert_eq!((t.as_str(), p.as_str()), ("Just text.", ""));
     }
 
     #[test]

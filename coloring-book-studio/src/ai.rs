@@ -205,9 +205,9 @@ async fn runware(http: &reqwest::Client, s: &Settings, r: &ImagePrompt, referenc
         Some(png) => {
             task["model"] = s.runware_ref_model.trim().into();
             task["positivePrompt"] = format!(
-                "Draw a completely new picture using the character(s) shown in the reference image, keeping \
-                 their faces, bodies, proportions and clothes exactly the same. Do not copy the reference \
-                 layout. {}",
+                "The reference image shows the approved drawing style and the characters. Draw a completely \
+                 new picture in exactly that drawing style, keeping any characters shown exactly the same \
+                 (faces, bodies, proportions, clothes). Do not copy the reference layout. {}",
                 r.prompt
             )
             .into();

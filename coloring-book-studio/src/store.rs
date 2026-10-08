@@ -113,6 +113,7 @@ impl Store {
             .filter_map(|pg| pg.image.as_deref())
             .chain(p.cover_image.as_deref())
             .chain(p.characters.iter().filter_map(|c| c.reference_image.as_deref()))
+            .chain(p.style_image.as_deref())
             .collect();
         for entry in fs::read_dir(&dir)? {
             let name = entry?.file_name().to_string_lossy().to_string();
@@ -152,6 +153,7 @@ impl Store {
         p.id = disk.id.clone();
         p.cover_image = disk.cover_image.clone();
         p.cover_attempt = disk.cover_attempt;
+        p.style_image = disk.style_image.clone();
         let mut seen_chars = std::collections::HashSet::new();
         for c in &mut p.characters {
             if c.id.is_empty() || !safe_name(&c.id) || !seen_chars.insert(c.id.clone()) {
@@ -190,11 +192,14 @@ impl Store {
         Ok(p)
     }
 
-    /// Replace all pages (after re-splitting the story).
-    pub fn replace_pages(&self, id: &str, texts: Vec<String>) -> Result<Project> {
+    /// Replace all pages (after re-splitting the story) with (text, picture idea) pairs.
+    pub fn replace_pages(&self, id: &str, pages: Vec<(String, String)>) -> Result<Project> {
         let _g = self.guard();
         let mut p = self.load(id)?;
-        p.pages = texts.into_iter().map(|text| Page { id: new_id(), text, ..Default::default() }).collect();
+        p.pages = pages
+            .into_iter()
+            .map(|(text, scene)| Page { id: new_id(), text, scene, ..Default::default() })
+            .collect();
         self.save_locked(&mut p)?;
         Ok(p)
     }
@@ -216,6 +221,7 @@ impl Store {
                 let prefix = format!("char-{}", p.characters[idx].id);
                 (prefix, &mut p.characters[idx].reference_image)
             }
+            Slot::Style => ("style".to_string(), &mut p.style_image),
         };
         let name = format!("{prefix}-{}.png", new_id());
         write_atomic(&dir.join(&name), png)?;
@@ -233,6 +239,26 @@ impl Store {
                         p.characters[i].ref_attempt += 1;
                     }
                 }
+                Slot::Style => {}
+            }
+        }
+        self.save_locked(&mut p)?;
+        Ok(p)
+    }
+
+    /// Copy a book with all its pictures, e.g. for a second edition with different text.
+    pub fn duplicate(&self, id: &str) -> Result<Project> {
+        let _g = self.guard();
+        let mut p = self.load(id)?;
+        let from = self.dir(id)?;
+        p.id = new_id();
+        p.title = format!("{} (copy)", p.title);
+        let to = self.dir(&p.id)?;
+        fs::create_dir_all(&to)?;
+        for entry in fs::read_dir(&from)? {
+            let name = entry?.file_name();
+            if name.to_string_lossy().ends_with(".png") {
+                fs::copy(from.join(&name), to.join(&name))?;
             }
         }
         self.save_locked(&mut p)?;

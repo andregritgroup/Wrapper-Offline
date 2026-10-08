@@ -34,6 +34,38 @@ pub enum Layout {
     FacingPages,
     /// Story text at the top of the page, picture underneath.
     TextAbove,
+    /// Square picture at the top of the page, story text underneath.
+    PictureAbove,
+}
+
+/// Spelling used in the words the app itself prints in the book ("colour" / "color").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Spelling {
+    #[default]
+    Uk,
+    Us,
+}
+
+impl Spelling {
+    pub fn colour(self) -> &'static str {
+        match self {
+            Spelling::Uk => "colour",
+            Spelling::Us => "color",
+        }
+    }
+}
+
+/// How detailed the pictures are, independent of reading age.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Detail {
+    /// Follow the age group.
+    #[default]
+    Auto,
+    Simple,
+    Medium,
+    Detailed,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -107,6 +139,14 @@ pub struct Project {
     pub paper: Paper,
     /// Extra art direction applied to every picture ("jungle setting, cute animals").
     pub style_notes: String,
+    pub spelling: Spelling,
+    pub detail: Detail,
+    /// Insert a blank page after every picture page (pens can't bleed onto the next picture).
+    pub blank_backs: bool,
+    /// Add the "This book belongs to" and "The End" pages.
+    pub extras: bool,
+    /// An approved picture whose drawing style every new picture should match (server-owned).
+    pub style_image: Option<String>,
     pub seed: u64,
     pub characters: Vec<Character>,
     pub story: String,
@@ -127,6 +167,11 @@ impl Default for Project {
             layout: Layout::default(),
             paper: Paper::default(),
             style_notes: String::new(),
+            spelling: Spelling::default(),
+            detail: Detail::default(),
+            blank_backs: false,
+            extras: true,
+            style_image: None,
             seed: now_nanos() % 1_000_000_007,
             characters: Vec::new(),
             story: String::new(),
@@ -151,6 +196,16 @@ impl Project {
         self.pages.iter().position(|p| p.id == page_id)
     }
 
+    /// Level of picture detail: the explicit setting, else the age group's.
+    pub fn detail_level(&self) -> AgeBand {
+        match self.detail {
+            Detail::Auto => self.age_band,
+            Detail::Simple => AgeBand::Early,
+            Detail::Medium => AgeBand::Middle,
+            Detail::Detailed => AgeBand::Older,
+        }
+    }
+
     pub fn character_index(&self, char_id: &str) -> Option<usize> {
         self.characters.iter().position(|c| c.id == char_id)
     }
@@ -163,12 +218,16 @@ pub enum Slot {
     Page(String),
     /// A character's reference picture.
     Character(String),
+    /// The book's style reference picture (upload only).
+    Style,
 }
 
 impl Slot {
     pub fn parse(s: &str) -> Slot {
         if s == "cover" {
             Slot::Cover
+        } else if s == "style" {
+            Slot::Style
         } else if let Some(id) = s.strip_prefix("char-") {
             Slot::Character(id.to_string())
         } else {
