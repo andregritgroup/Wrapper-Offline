@@ -85,6 +85,13 @@ the AI is asked to make each picture.
 - **Page breaks**: put a line containing only `---` in the story wherever you want a new page.
   Otherwise the story is split automatically, or into the number of pages you choose. There's no
   page limit.
+- **Picture prompts in the story file**: inside a page, a line starting with `Picture:` (continuing until the
+  next blank line) becomes that page's picture idea and is not printed. A whole book can be imported this way.
+- **Style picture**: on the Book tab, upload one approved picture as the *style reference*. With Runware, every
+  new picture, including the characters' reference pictures, copies its drawing style.
+- **Two editions, one set of art**: *Copy book with pictures* makes a copy you can rewrite for another age group.
+- **KDP-style interior**: layout *Square picture, text below*, paper *US Letter*, *Blank back after each picture*,
+  spelling *American*. Pictures are processed at 3072 px, which is above 300 DPI at that size.
 - **Your own art**: *Upload a drawing* accepts a photo or scan of a hand-drawn sketch and cleans it
   up the same way.
 - **Printing**: the default layout puts the story text on one page and a full-page picture on the
