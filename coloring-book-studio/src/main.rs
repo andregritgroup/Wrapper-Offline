@@ -63,6 +63,9 @@ async fn main() -> anyhow::Result<()> {
     if settings.hf_token.is_empty() {
         settings.hf_token = std::env::var("HF_TOKEN").unwrap_or_default();
     }
+    if settings.runware_token.is_empty() {
+        settings.runware_token = std::env::var("RUNWARE_API_KEY").unwrap_or_default();
+    }
     if settings.pollinations_token.is_empty() {
         settings.pollinations_token = std::env::var("POLLINATIONS_TOKEN").unwrap_or_default();
     }
@@ -169,7 +172,18 @@ async fn generate_slot(State(st): State<AppState>, Path((id, slot)): Path<(Strin
     let p = st.store.load(&id)?;
     let req = story::image_prompt(&p, &slot).ok_or_else(|| NotFound("page".into()))?;
     let settings = st.settings.read().await.clone();
-    let raw = ai::generate(&st.http, &settings, &req).await?;
+    let reference = if settings.provider.uses_references() && !req.references.is_empty() {
+        let mut images = Vec::new();
+        for cid in &req.references {
+            let c = &p.characters[p.character_index(cid).ok_or_else(|| NotFound("character".into()))?];
+            let name = c.reference_image.as_deref().unwrap_or_default();
+            images.push(image::open(st.store.image_path(&id, name)?)?.to_luma8());
+        }
+        Some(tokio::task::spawn_blocking(move || lineart::reference_sheet(&images)).await??)
+    } else {
+        None
+    };
+    let raw = ai::generate(&st.http, &settings, &req, reference).await?;
     let age = p.age_band;
     let png = tokio::task::spawn_blocking(move || lineart::to_coloring_png(&raw, age)).await??;
     Ok(Json(st.store.set_image(&id, &slot, &png, true)?))

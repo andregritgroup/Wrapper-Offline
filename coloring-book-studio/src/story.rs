@@ -235,7 +235,12 @@ pub struct ImagePrompt {
     pub width: u32,
     pub height: u32,
     pub seed: u64,
+    /// Ids of characters whose reference pictures apply to this picture.
+    pub references: Vec<String>,
 }
+
+/// More characters than this in one reference sheet makes each one too small to copy reliably.
+pub const MAX_REFERENCES: usize = 3;
 
 const NEGATIVE: &str = "color, colour, colored, shading, shadows, gradient, grey fill, gray tones, \
 halftone, crosshatching, solid black areas, photo, photorealistic, 3d render, text, letters, words, \
@@ -295,6 +300,16 @@ pub fn image_prompt(project: &Project, slot: &Slot) -> Option<ImagePrompt> {
             let present = characters_in(&project.characters, &format!("{}\n{}", page.text, page.scene));
             (scene, present, idx as u64 + 1, page.attempt, project.layout == Layout::FacingPages)
         }
+        Slot::Character(id) => {
+            let idx = project.character_index(id)?;
+            let c = &project.characters[idx];
+            let scene = format!(
+                "Character design reference for {}: only this one character, full body from head to feet, \
+                 standing and facing forward, friendly expression, centred, nothing else in the picture",
+                c.name.trim()
+            );
+            (scene, vec![c.name.trim().to_string()], 100_000 + idx as u64, c.ref_attempt, true)
+        }
     };
 
     let mut prompt = format!(
@@ -320,7 +335,18 @@ pub fn image_prompt(project: &Project, slot: &Slot) -> Option<ImagePrompt> {
 
     let (width, height) = if portrait { (768, 1024) } else { (1024, 1024) };
     let seed = (project.seed + index * 1009 + attempt as u64 * 7919) % 2_147_483_647;
-    Some(ImagePrompt { prompt, negative: NEGATIVE.into(), width, height, seed })
+    // Reference pictures the image model should copy the characters' look from.
+    let references = match slot {
+        Slot::Character(_) => Vec::new(),
+        _ => project
+            .characters
+            .iter()
+            .filter(|c| c.reference_image.is_some() && present.iter().any(|p| p == c.name.trim()))
+            .take(MAX_REFERENCES)
+            .map(|c| c.id.clone())
+            .collect(),
+    };
+    Some(ImagePrompt { prompt, negative: NEGATIVE.into(), width, height, seed, references })
 }
 
 #[cfg(test)]
@@ -375,8 +401,8 @@ mod tests {
     #[test]
     fn character_detection_is_whole_word() {
         let chars = vec![
-            Character { name: "Sam".into(), aliases: "".into(), description: "".into() },
-            Character { name: "Grandma Rose".into(), aliases: "Ouma, Gran".into(), description: "".into() },
+            Character { name: "Sam".into(), ..Default::default() },
+            Character { name: "Grandma Rose".into(), aliases: "Ouma, Gran".into(), ..Default::default() },
         ];
         assert_eq!(characters_in(&chars, "Samantha went home."), Vec::<String>::new());
         assert_eq!(characters_in(&chars, "It was Sam's kite."), vec!["Sam"]);
@@ -387,16 +413,21 @@ mod tests {
     fn prompt_includes_present_character_descriptions_only() {
         let mut p = Project::default();
         p.characters = vec![
-            Character { name: "Lulu".into(), aliases: "".into(), description: "a small giraffe with a scarf".into() },
-            Character { name: "Bo".into(), aliases: "".into(), description: "a round bear".into() },
+            Character { id: "l".into(), name: "Lulu".into(), description: "a small giraffe with a scarf".into(), ..Default::default() },
+            Character { id: "b".into(), name: "Bo".into(), description: "a round bear".into(), reference_image: Some("b.png".into()), ..Default::default() },
         ];
         p.pages = vec![Page { id: "a".into(), text: "Lulu found a shell.".into(), ..Default::default() }];
         let ip = image_prompt(&p, &Slot::Page("a".into())).unwrap();
         assert!(ip.prompt.contains("small giraffe"));
         assert!(!ip.prompt.contains("round bear"));
         assert!(image_prompt(&p, &Slot::Page("missing".into())).is_none());
+        assert!(ip.references.is_empty(), "Lulu has no reference picture");
         let cover = image_prompt(&p, &Slot::Cover).unwrap();
         assert!(cover.prompt.contains("round bear") && cover.prompt.contains("small giraffe"));
+        assert_eq!(cover.references, vec!["b"]);
+        let sheet = image_prompt(&p, &Slot::Character("l".into())).unwrap();
+        assert!(sheet.prompt.contains("small giraffe") && !sheet.prompt.contains("round bear"));
+        assert!(sheet.references.is_empty());
     }
 
     #[test]

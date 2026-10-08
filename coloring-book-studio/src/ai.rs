@@ -16,6 +16,9 @@ pub enum Provider {
     /// pollinations.ai – free, no account needed (rate limited).
     #[default]
     Pollinations,
+    /// runware.ai – pay-as-you-go, about 1 US cent per picture with FLUX; the only option
+    /// here that copies characters from their reference pictures.
+    Runware,
     /// Hugging Face Inference Providers – free account token, small monthly free quota.
     HuggingFace,
     /// Your own Stable Diffusion (AUTOMATIC1111 / Forge / SD.Next) – free and unlimited, needs a GPU.
@@ -37,6 +40,11 @@ pub struct Settings {
     pub sd_steps: u32,
     /// Appended to every prompt for local SD, e.g. a line-art LoRA tag.
     pub sd_extra_prompt: String,
+    pub runware_token: String,
+    /// Model for pictures without a character reference (FLUX.1 [dev]).
+    pub runware_model: String,
+    /// Model used when a character reference picture is supplied (FLUX.1 Kontext [dev]).
+    pub runware_ref_model: String,
 }
 
 impl Default for Settings {
@@ -51,6 +59,9 @@ impl Default for Settings {
             sd_url: "http://127.0.0.1:7860".into(),
             sd_steps: 28,
             sd_extra_prompt: "line art, coloring book, lineart".into(),
+            runware_token: String::new(),
+            runware_model: "runware:101@1".into(),
+            runware_ref_model: "runware:106@1".into(),
         }
     }
 }
@@ -62,6 +73,7 @@ pub struct PublicSettings {
     pub settings: Settings,
     pub pollinations_token_set: bool,
     pub hf_token_set: bool,
+    pub runware_token_set: bool,
 }
 
 impl Settings {
@@ -69,10 +81,12 @@ impl Settings {
         let mut s = self.clone();
         s.pollinations_token.clear();
         s.hf_token.clear();
+        s.runware_token.clear();
         PublicSettings {
             settings: s,
             pollinations_token_set: !self.pollinations_token.is_empty(),
             hf_token_set: !self.hf_token.is_empty(),
+            runware_token_set: !self.runware_token.is_empty(),
         }
     }
 
@@ -84,16 +98,34 @@ impl Settings {
         if incoming.hf_token.trim().is_empty() {
             incoming.hf_token = std::mem::take(&mut self.hf_token);
         }
+        if incoming.runware_token.trim().is_empty() {
+            incoming.runware_token = std::mem::take(&mut self.runware_token);
+        }
+        incoming.runware_token = incoming.runware_token.trim().to_string();
         incoming.pollinations_token = incoming.pollinations_token.trim().to_string();
         incoming.hf_token = incoming.hf_token.trim().to_string();
         *self = incoming;
     }
 }
 
+impl Provider {
+    /// Whether this provider uses character reference pictures.
+    pub fn uses_references(self) -> bool {
+        self == Provider::Runware
+    }
+}
+
 /// Generate one image; returns encoded image bytes (PNG/JPEG/WebP).
-pub async fn generate(http: &reqwest::Client, s: &Settings, req: &ImagePrompt) -> Result<Vec<u8>> {
+/// `reference` is a PNG sheet of the characters to copy (only used by providers that support it).
+pub async fn generate(
+    http: &reqwest::Client,
+    s: &Settings,
+    req: &ImagePrompt,
+    reference: Option<Vec<u8>>,
+) -> Result<Vec<u8>> {
     match s.provider {
         Provider::Pollinations => pollinations(http, s, req).await,
+        Provider::Runware => runware(http, s, req, reference).await,
         Provider::HuggingFace => hugging_face(http, s, req).await,
         Provider::LocalSd => local_sd(http, s, req).await,
         Provider::Placeholder => placeholder(req),
@@ -152,6 +184,95 @@ async fn pollinations(http: &reqwest::Client, s: &Settings, r: &ImagePrompt) -> 
         }
     }
     bail!(last)
+}
+
+async fn runware(http: &reqwest::Client, s: &Settings, r: &ImagePrompt, reference: Option<Vec<u8>>) -> Result<Vec<u8>> {
+    if s.runware_token.is_empty() {
+        bail!("Runware needs an API key (Settings tab, or RUNWARE_API_KEY environment variable)");
+    }
+    let mut task = serde_json::json!({
+        "taskType": "imageInference",
+        "taskUUID": uuid_v4(),
+        "positivePrompt": r.prompt,
+        "width": r.width,
+        "height": r.height,
+        "seed": r.seed.max(1),
+        "numberResults": 1,
+        "outputType": "base64Data",
+        "outputFormat": "PNG",
+    });
+    match reference {
+        Some(png) => {
+            task["model"] = s.runware_ref_model.trim().into();
+            task["positivePrompt"] = format!(
+                "Draw a completely new picture using the character(s) shown in the reference image, keeping \
+                 their faces, bodies, proportions and clothes exactly the same. Do not copy the reference \
+                 layout. {}",
+                r.prompt
+            )
+            .into();
+            let uri = format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png));
+            task["inputs"] = serde_json::json!({ "referenceImages": [uri] });
+        }
+        None => task["model"] = s.runware_model.trim().into(),
+    }
+
+    let mut last = String::new();
+    for attempt in 0..3u32 {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_secs(5 * attempt as u64)).await;
+        }
+        let resp = http
+            .post(std::env::var("RUNWARE_URL").unwrap_or_else(|_| "https://api.runware.ai/v1".into()))
+            .bearer_auth(&s.runware_token)
+            .json(&serde_json::json!([task]))
+            .send()
+            .await
+            .context("could not reach Runware")?;
+        let status = resp.status();
+        let bytes = resp.bytes().await?;
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        if let Some(msg) = body["errors"][0]["message"].as_str() {
+            last = format!("Runware: {msg}");
+        } else if status.is_success() {
+            let item = &body["data"][0];
+            if let Some(b64) = item["imageBase64Data"].as_str() {
+                let img = base64::engine::general_purpose::STANDARD.decode(b64.trim())?;
+                check_image(&img, "Runware")?;
+                return Ok(img);
+            }
+            if let Some(url) = item["imageURL"].as_str() {
+                let img = http.get(url).send().await?.error_for_status()?.bytes().await?.to_vec();
+                check_image(&img, "Runware")?;
+                return Ok(img);
+            }
+            last = format!("Runware returned no image: {}", snippet(&bytes));
+        } else {
+            last = format!("Runware returned {status}: {}", snippet(&bytes));
+        }
+        if !retryable(status) {
+            break;
+        }
+    }
+    bail!(last)
+}
+
+fn uuid_v4() -> String {
+    // Version-4 UUID from a time-seeded xorshift; uniqueness per request is all Runware needs.
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut x = crate::model::now_nanos() ^ n.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ ((std::process::id() as u64) << 32);
+    let mut b = [0u8; 16];
+    for chunk in b.chunks_mut(8) {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        chunk.copy_from_slice(&x.to_le_bytes());
+    }
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let h: String = b.iter().map(|v| format!("{v:02x}")).collect();
+    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
 }
 
 async fn hugging_face(http: &reqwest::Client, s: &Settings, r: &ImagePrompt) -> Result<Vec<u8>> {

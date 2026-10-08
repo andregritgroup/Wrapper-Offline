@@ -121,7 +121,7 @@ pre.prompt { white-space: pre-wrap; background: #faf7f0; border-radius: 10px; pa
   </section>
 
   <section class="tab" id="tab-characters">
-    <div class="card hint">Describe each character the <b>same way every time</b>: animal or person, age, body shape, hair, clothes, one or two stand-out features. This exact description is added to every picture they appear in, which is what keeps them looking alike from page to page. Add other names the story uses for them (e.g. “Gran, Ouma”) so they're recognised.</div>
+    <div class="card hint">With <b>Runware</b> (AI settings), press <b>Make reference picture</b> for each character, or upload your own drawing of them. Every page they appear on copies that picture, so they look the same throughout the book. Also describe each character the <b>same way every time</b>: animal or person, age, body shape, hair, clothes, one or two stand-out features. This exact description is added to every picture they appear in, which is what keeps them looking alike from page to page. Add other names the story uses for them (e.g. “Gran, Ouma”) so they're recognised.</div>
     <div id="charList"></div>
     <button class="btn primary" id="addChar">+ Add character</button>
   </section>
@@ -184,7 +184,8 @@ pre.prompt { white-space: pre-wrap; background: #faf7f0; border-radius: 10px; pa
     <div class="card">
       <label>Picture maker (all free)</label>
       <select id="provider">
-        <option value="pollinations">Pollinations.ai – free, no account (default)</option>
+        <option value="runware">Runware – about 1 US cent per picture, keeps characters consistent (recommended)</option>
+        <option value="pollinations">Pollinations.ai – free, no account</option>
         <option value="hugging_face">Hugging Face – free account token, small monthly allowance</option>
         <option value="local_sd">My own Stable Diffusion – free & unlimited, needs a good graphics card</option>
         <option value="placeholder">Test drawings – no AI, works offline</option>
@@ -205,6 +206,14 @@ pre.prompt { white-space: pre-wrap; background: #faf7f0; border-radius: 10px; pa
       </div>
       <p class="hint">Free accounts get a small monthly credit; fine for a few books, then it stops until the next month.</p>
     </div>
+    <div class="card" data-prov="runware">
+      <div class="grid">
+        <div><label>API key (runware.ai → Dashboard → API Keys)</label><input id="runware_token" type="password" placeholder="leave empty to keep current"></div>
+        <div><label>Model for scenes</label><input id="runware_model"></div>
+        <div><label>Model that copies characters</label><input id="runware_ref_model"></div>
+      </div>
+      <p class="hint">Pay-as-you-go, no subscription. Defaults: FLUX.1 [dev] (<code>runware:101@1</code>) for pictures without characters, FLUX.1 Kontext [dev] (<code>runware:106@1</code>, about $0.01 per picture) when a character has a reference picture. Make each character's reference picture first (Characters tab); every page they appear on then copies their look. A 30-page book costs roughly US$0.30–0.50.</p>
+    </div>
     <div class="card" data-prov="local_sd">
       <div class="grid">
         <div><label>Address (start WebUI/Forge with --api)</label><input id="sd_url"></div>
@@ -224,6 +233,7 @@ pre.prompt { white-space: pre-wrap; background: #faf7f0; border-radius: 10px; pa
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 let book = null;          // current project
+let currentProvider = ""; // image provider from settings
 let saveTimer = null;
 let busy = new Set();     // slots being generated
 let stopRequested = false;
@@ -279,6 +289,8 @@ async function openBook(id) {
   book = await api("GET", `/api/projects/${id}`);
   try { localStorage.setItem("cbs.book", id); } catch (_) {}
   renderAll();
+  // Books made before character ids existed: one save assigns them.
+  if (book.characters.some(c => !c.id)) await saveNow();
 }
 
 $("#bookSelect").onchange = e => openBook(e.target.value);
@@ -320,6 +332,13 @@ async function flushSave() { if (saveTimer) { clearTimeout(saveTimer); await sav
 function mergeServer(server) {
   book.cover_image = server.cover_image;
   book.cover_attempt = server.cover_attempt;
+  let newCharIds = false;
+  book.characters.forEach((c, i) => {
+    if (!c.id && server.characters[i]) { c.id = server.characters[i].id; newCharIds = true; }
+    const s = server.characters.find(x => x.id === c.id);
+    if (s) { c.reference_image = s.reference_image; c.ref_attempt = s.ref_attempt; }
+  });
+  if (newCharIds) renderCharacters();
   book.pages.forEach((p, i) => {
     const s = server.pages[i];
     if (!s) return;
@@ -362,25 +381,39 @@ function updateWordCount() {
 function renderCharacters() {
   const list = $("#charList");
   list.innerHTML = book.characters.map((c, i) => `
-    <div class="card">
+    <div class="card page-card">
+      <div>
+        <div class="thumb" id="thumb-char-${c.id}">No reference picture</div>
+      </div>
+      <div>
       <div class="grid">
         <div><label>Name</label><input data-char="${i}" data-key="name" value="${esc(c.name)}" placeholder="e.g. Lulu"></div>
         <div><label>Other names in the story</label><input data-char="${i}" data-key="aliases" value="${esc(c.aliases)}" placeholder="e.g. the little giraffe, Lu"></div>
       </div>
       <label style="margin-top:8px">What they look like</label>
       <textarea rows="3" data-char="${i}" data-key="description" placeholder="e.g. a small young giraffe with big round eyes, short stubby horns, a spotty coat and a striped scarf">${esc(c.description)}</textarea>
-      <div class="row" style="margin-top:8px"><button class="btn danger" data-delchar="${i}">Remove</button></div>
+      <div class="row" style="margin-top:8px">
+        ${c.id ? `<button class="btn primary" data-gen="char-${c.id}">Make reference picture</button>
+        <button class="btn" data-upload="char-${c.id}">Upload a drawing</button>` : ""}
+        <span style="flex:1"></span>
+        <button class="btn danger" data-delchar="${i}">Remove</button>
+      </div>
+      </div>
     </div>`).join("") || `<div class="card empty">No characters yet.</div>`;
   list.querySelectorAll("[data-char]").forEach(el => el.oninput = () => {
     book.characters[+el.dataset.char][el.dataset.key] = el.value; scheduleSave();
   });
   list.querySelectorAll("[data-delchar]").forEach(el => el.onclick = () => {
+    if (book.characters[+el.dataset.delchar].reference_image && !confirm("Remove this character and their reference picture?")) return;
     book.characters.splice(+el.dataset.delchar, 1); renderCharacters(); scheduleSave();
   });
+  bindSlotButtons(list);
+  renderPicturesOnly();
 }
-$("#addChar").onclick = () => {
-  book.characters.push({ name: "", aliases: "", description: "" });
-  renderCharacters(); scheduleSave();
+$("#addChar").onclick = async () => {
+  book.characters.push({ id: "", name: "", aliases: "", description: "", reference_image: null, ref_attempt: 0 });
+  clearTimeout(saveTimer); await saveNow(); // the server assigns the id the picture buttons need
+  renderCharacters();
   const inputs = $$('#charList input[data-key="name"]'); inputs[inputs.length - 1]?.focus();
 };
 
@@ -431,12 +464,22 @@ function renderPicturesOnly() {
   });
   const done = book.pages.filter(p => p.image).length;
   $("#pdfInfo").textContent = `${done} of ${book.pages.length} pages have pictures${book.cover_image ? ", cover ready" : ""}.`;
+  book.characters.forEach(c => {
+    const t = document.getElementById("thumb-char-" + c.id);
+    if (t && c.id) setThumb(t, c.reference_image, "char-" + c.id, "No reference picture");
+  });
   $$("[data-gen]").forEach(b => {
     const slot = b.dataset.gen;
-    const has = slot === "cover" ? book.cover_image : book.pages.find(p => p.id === slot)?.image;
-    b.textContent = busy.has(slot) ? "Drawing…" : has ? "Try again" : (slot === "cover" ? "Generate cover" : "Generate");
+    const has = slotImage(slot);
+    b.textContent = busy.has(slot) ? "Drawing…" : has ? "Try again" : slot === "cover" ? "Generate cover" : slot.startsWith("char-") ? "Make reference picture" : "Generate";
     b.disabled = busy.has(slot);
   });
+}
+
+function slotImage(slot) {
+  if (slot === "cover") return book.cover_image;
+  if (slot.startsWith("char-")) return book.characters.find(c => "char-" + c.id === slot)?.reference_image;
+  return book.pages.find(p => p.id === slot)?.image;
 }
 
 function setThumb(el, image, slot, emptyText) {
@@ -498,6 +541,9 @@ $("#genAll").onclick = async () => {
   await flushSave();
   const todo = book.pages.filter(p => !p.image).map(p => p.id);
   if (!book.cover_image) todo.unshift("cover");
+  // With Runware, characters' reference pictures come first so every page can copy them.
+  if (currentProvider === "runware")
+    todo.unshift(...book.characters.filter(c => c.id && c.name.trim() && !c.reference_image).map(c => "char-" + c.id));
   if (!todo.length) { toast("Every page already has a picture. Use “Try again” on any you want to redo."); return; }
   stopRequested = false;
   $("#genAll").disabled = true; $("#stopAll").hidden = false;
@@ -509,7 +555,7 @@ $("#genAll").onclick = async () => {
   update();
   for (const slot of todo) {
     if (stopRequested) break;
-    if (slot !== "cover" && !book.pages.some(p => p.id === slot)) { done++; continue; }
+    if (slot !== "cover" && !slot.startsWith("char-") && !book.pages.some(p => p.id === slot)) { done++; continue; }
     try { await generate(slot); }
     catch (e) { failed++; toast(`Picture failed: ${e.message}`, true); }
     done++; update();
@@ -549,16 +595,18 @@ $("#exportPdf").onclick = async () => {
 async function loadSettings() {
   const s = await api("GET", "/api/settings");
   $("#provider").value = s.provider;
-  for (const k of ["pollinations_url", "pollinations_model", "hf_model", "sd_url", "sd_steps", "sd_extra_prompt"]) $("#" + k).value = s[k];
+  currentProvider = s.provider;
+  for (const k of ["pollinations_url", "pollinations_model", "hf_model", "sd_url", "sd_steps", "sd_extra_prompt", "runware_model", "runware_ref_model"]) $("#" + k).value = s[k];
+  $("#runware_token").value = "";
   $("#pollinations_token").value = ""; $("#hf_token").value = "";
-  $("#tokenState").textContent = [s.hf_token_set && "Hugging Face token saved", s.pollinations_token_set && "Pollinations token saved"].filter(Boolean).join(" · ");
+  $("#tokenState").textContent = [s.runware_token_set && "Runware key saved", s.hf_token_set && "Hugging Face token saved", s.pollinations_token_set && "Pollinations token saved"].filter(Boolean).join(" · ");
   showProviderPanel();
 }
 function showProviderPanel() { $$("[data-prov]").forEach(el => el.hidden = el.dataset.prov !== $("#provider").value); }
 $("#provider").onchange = showProviderPanel;
 $("#saveSettings").onclick = async () => {
   const body = { provider: $("#provider").value };
-  for (const k of ["pollinations_url", "pollinations_model", "pollinations_token", "hf_token", "hf_model", "sd_url", "sd_extra_prompt"]) body[k] = $("#" + k).value;
+  for (const k of ["pollinations_url", "pollinations_model", "pollinations_token", "hf_token", "hf_model", "sd_url", "sd_extra_prompt", "runware_token", "runware_model", "runware_ref_model"]) body[k] = $("#" + k).value;
   body.sd_steps = parseInt($("#sd_steps").value, 10) || 28;
   try { await api("PUT", "/api/settings", body); toast("Settings saved"); loadSettings(); }
   catch (e) { toast(e.message, true); }
@@ -673,6 +721,7 @@ $("#readAloud").onclick = () => {
 
 window.addEventListener("beforeunload", e => { if (saveTimer) { saveNow(); e.preventDefault(); } });
 loadBooks().catch(e => toast(e.message, true));
+api("GET", "/api/settings").then(s => currentProvider = s.provider).catch(() => {});
 </script>
 </body>
 </html>

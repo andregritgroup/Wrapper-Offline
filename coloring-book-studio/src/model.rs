@@ -57,11 +57,16 @@ impl Paper {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Character {
+    /// Stable id (server-assigned) used for the character's reference picture.
+    pub id: String,
     pub name: String,
     /// Comma-separated other names the story uses ("Grandpa, Oupa").
     pub aliases: String,
     /// Fixed visual description, repeated in every prompt for consistency.
     pub description: String,
+    /// Reference picture (server-owned) that page pictures copy the character's look from.
+    pub reference_image: Option<String>,
+    pub ref_attempt: u32,
 }
 
 impl Character {
@@ -145,6 +150,10 @@ impl Project {
     pub fn page_index(&self, page_id: &str) -> Option<usize> {
         self.pages.iter().position(|p| p.id == page_id)
     }
+
+    pub fn character_index(&self, char_id: &str) -> Option<usize> {
+        self.characters.iter().position(|c| c.id == char_id)
+    }
 }
 
 /// Where a generated or uploaded picture goes.
@@ -152,12 +161,16 @@ impl Project {
 pub enum Slot {
     Cover,
     Page(String),
+    /// A character's reference picture.
+    Character(String),
 }
 
 impl Slot {
     pub fn parse(s: &str) -> Slot {
         if s == "cover" {
             Slot::Cover
+        } else if let Some(id) = s.strip_prefix("char-") {
+            Slot::Character(id.to_string())
         } else {
             Slot::Page(s.to_string())
         }

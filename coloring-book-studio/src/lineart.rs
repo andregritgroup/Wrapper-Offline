@@ -96,6 +96,30 @@ pub fn process(img: &DynamicImage, p: &LineParams, long_side: u32) -> GrayImage 
     paper
 }
 
+/// Places character reference pictures side by side on one white sheet (PNG), so a
+/// single reference image can carry several characters.
+pub fn reference_sheet(images: &[GrayImage]) -> Result<Vec<u8>> {
+    const H: u32 = 768;
+    const GAP: u32 = 48;
+    let scaled: Vec<GrayImage> = images
+        .iter()
+        .map(|img| {
+            let w = ((img.width() as f32 * H as f32 / img.height().max(1) as f32).round() as u32).max(1);
+            image::imageops::resize(img, w, H, FilterType::Triangle)
+        })
+        .collect();
+    let width = scaled.iter().map(|i| i.width()).sum::<u32>() + GAP * (scaled.len() as u32 + 1);
+    let mut sheet = GrayImage::from_pixel(width.max(1), H + 2 * GAP, Luma([255]));
+    let mut x = GAP;
+    for img in &scaled {
+        image::imageops::replace(&mut sheet, img, x as i64, GAP as i64);
+        x += img.width() + GAP;
+    }
+    let mut out = Vec::new();
+    sheet.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)?;
+    Ok(out)
+}
+
 /// Clears (sets to 0) connected foreground regions smaller than `min_area` pixels.
 fn remove_small(mask: &mut GrayImage, min_area: u32, conn: Connectivity) {
     if min_area == 0 {
@@ -183,6 +207,17 @@ mod tests {
         draw_filled_rect_mut(&mut img, Rect::at(53, 53).of_size(3, 3), Luma([255]));
         let out = run(img);
         assert_eq!(out.get_pixel(54, 54)[0], 0);
+    }
+
+    #[test]
+    fn reference_sheet_tiles_side_by_side() {
+        let a = GrayImage::from_pixel(300, 400, Luma([0]));
+        let b = GrayImage::from_pixel(600, 400, Luma([0]));
+        let sheet = image::load_from_memory(&reference_sheet(&[a, b]).unwrap()).unwrap().to_luma8();
+        assert_eq!(sheet.height(), 768 + 96);
+        assert_eq!(sheet.width(), 576 + 1152 + 48 * 3);
+        assert_eq!(sheet.get_pixel(10, 10)[0], 255);
+        assert_eq!(sheet.get_pixel(48 + 10, 100)[0], 0);
     }
 
     #[test]

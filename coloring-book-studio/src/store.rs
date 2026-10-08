@@ -112,6 +112,7 @@ impl Store {
             .iter()
             .filter_map(|pg| pg.image.as_deref())
             .chain(p.cover_image.as_deref())
+            .chain(p.characters.iter().filter_map(|c| c.reference_image.as_deref()))
             .collect();
         for entry in fs::read_dir(&dir)? {
             let name = entry?.file_name().to_string_lossy().to_string();
@@ -151,6 +152,23 @@ impl Store {
         p.id = disk.id.clone();
         p.cover_image = disk.cover_image.clone();
         p.cover_attempt = disk.cover_attempt;
+        let mut seen_chars = std::collections::HashSet::new();
+        for c in &mut p.characters {
+            if c.id.is_empty() || !safe_name(&c.id) || !seen_chars.insert(c.id.clone()) {
+                c.id = new_id();
+                seen_chars.insert(c.id.clone());
+            }
+            match disk.characters.iter().find(|d| d.id == c.id) {
+                Some(d) => {
+                    c.reference_image = d.reference_image.clone();
+                    c.ref_attempt = d.ref_attempt;
+                }
+                None => {
+                    c.reference_image = None;
+                    c.ref_attempt = 0;
+                }
+            }
+        }
         let mut seen = std::collections::HashSet::new();
         for page in &mut p.pages {
             if page.id.is_empty() || !safe_name(&page.id) || !seen.insert(page.id.clone()) {
@@ -193,6 +211,11 @@ impl Store {
                 let prefix = format!("page-{}", p.pages[idx].id);
                 (prefix, &mut p.pages[idx].image)
             }
+            Slot::Character(cid) => {
+                let idx = p.character_index(cid).ok_or_else(|| NotFound(format!("character {cid:?}")))?;
+                let prefix = format!("char-{}", p.characters[idx].id);
+                (prefix, &mut p.characters[idx].reference_image)
+            }
         };
         let name = format!("{prefix}-{}.png", new_id());
         write_atomic(&dir.join(&name), png)?;
@@ -203,6 +226,11 @@ impl Store {
                 Slot::Page(pid) => {
                     if let Some(i) = p.page_index(pid) {
                         p.pages[i].attempt += 1;
+                    }
+                }
+                Slot::Character(cid) => {
+                    if let Some(i) = p.character_index(cid) {
+                        p.characters[i].ref_attempt += 1;
                     }
                 }
             }

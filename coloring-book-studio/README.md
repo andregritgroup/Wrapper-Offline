@@ -31,15 +31,28 @@ To colour on a tablet on the same Wi-Fi, start with `HOST=0.0.0.0 cargo run --re
 | `CBS_DATA_DIR` | `library` | Where books and settings are saved |
 | `HF_TOKEN` | – | Hugging Face token (can also be entered in the app) |
 | `POLLINATIONS_TOKEN` | – | Optional Pollinations token |
+| `RUNWARE_API_KEY` | – | Runware API key (can also be entered in the app) |
 
-## Free AI options (⚙ AI settings tab)
+## AI options (⚙ AI settings tab)
 
 | Option | Cost | Quality | Notes |
 |---|---|---|---|
-| **Pollinations.ai** (default) | Free, no account | Good (FLUX model) | Rate-limited, so a 30-page book takes a while. A free token raises the limits. |
-| **Hugging Face** | Free account token | Good (FLUX.1-schnell) | The free monthly allowance covers roughly a few books, then pauses until next month. |
-| **Your own Stable Diffusion** (AUTOMATIC1111 / Forge, started with `--api`) | Free, unlimited | Best once set up | Needs a decent NVIDIA GPU (≈ 6 GB+). Use a line-art or colouring-book model/LoRA and put its trigger words in *Extra prompt*. |
-| **Test drawings** | Free, offline | Not AI | Simple doodles to try the app and check the layout. |
+| **Runware** (recommended) | Pay-as-you-go, about US$0.01 per picture, roughly **US$0.30–0.50 per 30-page book** | Very good (FLUX), and **keeps characters consistent** | Uses character reference pictures (below). Needs an API key from runware.ai. |
+| **Pollinations.ai** | Free, no account | Good (FLUX) | Rate-limited. No reference pictures, so characters vary from page to page. |
+| **Hugging Face** | Free account token | Good (FLUX.1-schnell) | The small monthly free allowance runs out quickly. |
+| **Your own Stable Diffusion** (AUTOMATIC1111 / Forge, `--api`) | Free, unlimited | Best once set up | Needs a decent NVIDIA GPU (≈ 6 GB+). |
+| **Test drawings** | Free, offline | Not AI | For trying the app and checking layout. |
+
+### Consistent characters with Runware
+
+1. On the **Characters** tab, press **Make reference picture** for each character, or **Upload a drawing**
+   of them (your own art works well). *Generate all missing pictures* does this first automatically.
+2. Every page that mentions a character sends their reference picture (up to 3 characters, side by side)
+   to FLUX.1 Kontext [dev] (`runware:106@1`, about $0.01), which redraws the same character in the new scene.
+3. Pages without characters use FLUX.1 [dev] (`runware:101@1`). Both model ids can be changed in settings.
+
+Set the key in the app, or start with `RUNWARE_API_KEY=... cargo run --release`.
+Runware's prices change, so check the cost shown in its dashboard after the first few pictures.
 
 Free services change their rules without notice. If one stops working, the error message is shown
 in the app; switch to another provider in settings.
